@@ -9,6 +9,7 @@ public struct Migrator {
   private let appStateResetter: any AppStateResetter
   private let versionStore: any VersionStore
   private let minimumSupportedVersion: Int
+  private let logger: (any Logger)?
 
   private var migrations: [any Migration] = []
 
@@ -16,10 +17,12 @@ public struct Migrator {
     appStateResetter: any AppStateResetter,
     versionStore: any VersionStore,
     minimumSupportedVersion: Int = -1,
+    logger: (any Logger)? = nil,
   ) {
     self.appStateResetter = appStateResetter
     self.versionStore = versionStore
     self.minimumSupportedVersion = minimumSupportedVersion
+    self.logger = logger
   }
 
   public mutating func register(migration: any Migration) {
@@ -30,21 +33,28 @@ public struct Migrator {
   }
 
   public func migrateIfNeeded() throws {
-    guard let targetVersion = migrations.last?.version else { return }
-    guard let currentVersion = versionStore.current()
-    else {
-      try versionStore.update(targetVersion)
+    let currentVersion = versionStore.current()
+    let targetVersion = migrations.last?.version
+    logger?.migrateIfNeeded(
+      currentVersion: currentVersion,
+      targetVersion: targetVersion,
+      minimumSupportedVersion: minimumSupportedVersion
+    )
+    guard let targetVersion else { return }
+    guard let currentVersion else {
+      try update(version: targetVersion)
       return
     }
     guard currentVersion >= minimumSupportedVersion
     else {
       appStateResetter.resetEverything()
-      try versionStore.update(targetVersion)
+      try update(version: targetVersion)
       return
     }
     for migration in migrations where currentVersion < migration.version {
+      logger?.migrate(from: versionStore.current(), to: migration.version)
       try migration.migrate()
-      try versionStore.update(migration.version)
+      try update(version: migration.version)
     }
   }
 }
@@ -54,5 +64,12 @@ extension Migrator {
     migrations.forEach {
       self.register(migration: $0)
     }
+  }
+}
+
+private extension Migrator {
+  private func update(version: Int) throws {
+    try versionStore.update(version)
+    logger?.didUpdate(version: version)
   }
 }
